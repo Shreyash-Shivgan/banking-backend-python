@@ -75,3 +75,31 @@ def read_me(current_user: dict = Depends(get_current_user)):
         "email": current_user["email"],
         "role": current_user["role"]
     }
+
+def require_role(required_role: str):
+    def role_checker(current_user: dict = Depends(get_current_user)):
+        if current_user["role"] != required_role:
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        return current_user
+    return role_checker
+
+@app.get("/admin/dashboard")
+def admin_dashboard(
+    current_user: dict = Depends(require_role("admin"))
+):
+    return {
+        "message": "Welcome Admin",
+        "email": current_user["email"]
+    }
+
+@app.get("/customer/profile")
+def customer_profile(
+    current_user: dict = Depends(require_role("customer"))
+):
+    return {
+        "message": "Welcome Customer",
+        "email": current_user["email"]
+    }
