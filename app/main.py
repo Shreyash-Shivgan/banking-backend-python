@@ -1,19 +1,31 @@
-from fastapi import FastAPI, HTTPException
-from app.users import users_db
-from app.security import hash_password, verify_password
-from app.security import create_access_token
-from fastapi import Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from app.security import SECRET_KEY, ALGORITHM
+from app.accounts import accounts_db
+import uuid
+
+from app.users import users_db
+from app.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    SECRET_KEY,
+    ALGORITHM,
+)
+from app.models import Account
+from app.database import SessionLocal
+
 
 app = FastAPI(title="Banking Backend API")
 security = HTTPBearer()
 
+# ---------------- Health ----------------
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
+
+# ---------------- Auth ----------------
 @app.post("/register")
 def register(email: str, password: str):
     if email in users_db:
@@ -22,84 +34,118 @@ def register(email: str, password: str):
     users_db[email] = {
         "email": email,
         "password": hash_password(password),
-        "role": "customer"
+        "role": "customer",
     }
 
     return {"message": "User registered successfully"}
+
 
 @app.post("/login")
 def login(email: str, password: str):
     user = users_db.get(email)
 
-    if not user:
+    if not user or not verify_password(password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    if not verify_password(password, user["password"]):
-        raise HTTPException(status_code=400, detail="Invalid credentials")
+    token = create_access_token(data={"sub": user["email"]})
+    return {"access_token": token, "token_type": "bearer"}
 
-    access_token = create_access_token(
-    data={"sub": user["email"]}
-    )
-    return {
-    "access_token": access_token,
-    "token_type": "bearer"
-    }
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     token = credentials.credentials
 
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Could not validate credentials",
-    )
-
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
-            raise credentials_exception
+            raise HTTPException(status_code=401)
     except JWTError:
-        raise credentials_exception
+        raise HTTPException(status_code=401)
 
     user = users_db.get(email)
-    if user is None:
-        raise credentials_exception
+    if not user:
+        raise HTTPException(status_code=401)
 
     return user
+
 
 @app.get("/me")
 def read_me(current_user: dict = Depends(get_current_user)):
     return {
         "email": current_user["email"],
-        "role": current_user["role"]
+        "role": current_user["role"],
     }
 
+
+# ---------------- Roles ----------------
 def require_role(required_role: str):
-    def role_checker(current_user: dict = Depends(get_current_user)):
+    def checker(current_user: dict = Depends(get_current_user)):
         if current_user["role"] != required_role:
-            raise HTTPException(
-                status_code=403,
-                detail="Not enough permissions"
-            )
+            raise HTTPException(status_code=403, detail="Forbidden")
         return current_user
-    return role_checker
+    return checker
+
 
 @app.get("/admin/dashboard")
-def admin_dashboard(
-    current_user: dict = Depends(require_role("admin"))
-):
-    return {
-        "message": "Welcome Admin",
-        "email": current_user["email"]
-    }
+def admin_dashboard(current_user: dict = Depends(require_role("admin"))):
+    return {"message": "Welcome Admin"}
+
 
 @app.get("/customer/profile")
-def customer_profile(
+def customer_profile(current_user: dict = Depends(require_role("customer"))):
+    return {"message": "Welcome Customer"}
+
+
+# ---------------- Accounts ----------------
+@app.post("/accounts/create")
+def create_account(
     current_user: dict = Depends(require_role("customer"))
 ):
-    return {
-        "message": "Welcome Customer",
-        "email": current_user["email"]
+    account_number = str(uuid.uuid4())[:12]
+
+    accounts_db[account_number] = {
+        "account_number": account_number,
+        "balance": 0.0,
+        "owner_email": current_user["email"]
     }
+
+    return accounts_db[account_number]
+
+@app.post("/accounts/deposit")
+def deposit(
+    account_number: str,
+    amount: float,
+    current_user: dict = Depends(require_role("customer"))
+):
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    account = accounts_db.get(account_number)
+
+    if not account or account["owner_email"] != current_user["email"]:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    account["balance"] += amount
+    return account
+
+@app.post("/accounts/withdraw")
+def withdraw(
+    account_number: str,
+    amount: float,
+    current_user: dict = Depends(require_role("customer"))
+):
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    account = accounts_db.get(account_number)
+
+    if not account or account["owner_email"] != current_user["email"]:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if account["balance"] < amount:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    account["balance"] -= amount
+    return account
