@@ -149,3 +149,43 @@ def withdraw(
 
     account["balance"] -= amount
     return account
+
+@app.post("/accounts/transfer")
+def transfer_money(
+    from_account: str,
+    to_account: str,
+    amount: float,
+    current_user: dict = Depends(require_role("customer"))
+):
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    sender = accounts_db.get(from_account)
+    receiver = accounts_db.get(to_account)
+
+    if not sender or not receiver:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if sender["owner_email"] != current_user["email"]:
+        raise HTTPException(status_code=403, detail="Unauthorized account")
+
+    if sender["balance"] < amount:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    # ---- ATOMIC SECTION ----
+    try:
+        sender["balance"] -= amount
+
+        # simulate failure safety point
+        receiver["balance"] += amount
+    except Exception:
+        # rollback
+        sender["balance"] += amount
+        raise HTTPException(status_code=500, detail="Transaction failed")
+
+    return {
+        "from": sender["account_number"],
+        "to": receiver["account_number"],
+        "amount": amount,
+        "status": "success"
+    }
