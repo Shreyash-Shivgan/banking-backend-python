@@ -1,10 +1,15 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+import os
 
-DATABASE_URL = "sqlite:///./bank.db"
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL,
+    echo=True  # shows SQL queries (learning mode)
 )
 
 SessionLocal = sessionmaker(
