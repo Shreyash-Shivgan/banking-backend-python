@@ -15,7 +15,6 @@ from app.security import (
 )
 
 # ---------- DB setup ----------
-Base.metadata.create_all(bind=engine)
 
 def get_db():
     db = SessionLocal()
