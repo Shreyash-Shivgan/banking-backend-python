@@ -19,3 +19,8 @@ SessionLocal = sessionmaker(
 )
 
 Base = declarative_base()
+
+print("🔥 DATABASE_URL =", DATABASE_URL)  # TEMP DEBUG
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL not set")

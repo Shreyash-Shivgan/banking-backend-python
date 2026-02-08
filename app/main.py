@@ -1,9 +1,10 @@
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 import uuid
-
 from app.database import Base, engine, SessionLocal
 from app.models import User, Account
 from app.security import (
@@ -177,48 +178,53 @@ def withdraw(
         "balance": account.balance,
     }
 
+
 @app.post("/accounts/transfer")
 def transfer_money(
     from_account: str,
     to_account: str,
     amount: float,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("customer")),
+    current_user: dict = Depends(require_role("customer")),
 ):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    sender = (
-        db.query(Account)
-        .filter(Account.account_number == from_account)
-        .first()
-    )
-    receiver = (
-        db.query(Account)
-        .filter(Account.account_number == to_account)
-        .first()
-    )
-
-    if not sender or not receiver:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    if sender.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Unauthorized account")
-
-    if sender.balance < amount:
-        raise HTTPException(status_code=400, detail="Insufficient balance")
-
     try:
-        sender.balance -= amount
-        receiver.balance += amount
-        db.commit()
-    except Exception:
+        with db.begin():  # 🔒 REAL TRANSACTION STARTS HERE
+
+            sender = db.execute(
+                select(Account)
+                .where(Account.account_number == from_account)
+                .with_for_update()
+            ).scalar_one_or_none()
+
+            receiver = db.execute(
+                select(Account)
+                .where(Account.account_number == to_account)
+                .with_for_update()
+            ).scalar_one_or_none()
+
+            if not sender or not receiver:
+                raise HTTPException(status_code=404, detail="Account not found")
+
+            if sender.user_id != current_user["id"]:
+                raise HTTPException(status_code=403, detail="Unauthorized")
+
+            if sender.balance < amount:
+                raise HTTPException(status_code=400, detail="Insufficient balance")
+
+            sender.balance -= amount
+            receiver.balance += amount
+
+        # commit happens automatically here
+        return {
+            "from": from_account,
+            "to": to_account,
+            "amount": amount,
+            "status": "success"
+        }
+
+    except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Transaction failed")
-
-    return {
-        "from": sender.account_number,
-        "to": receiver.account_number,
-        "amount": amount,
-        "status": "success",
-    }
