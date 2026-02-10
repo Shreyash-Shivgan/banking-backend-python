@@ -178,8 +178,6 @@ def withdraw(
         "balance": account.balance,
     }
 
-
-
 @app.post("/accounts/transfer")
 def transfer(
     from_account: str,
@@ -191,31 +189,41 @@ def transfer(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
+    if from_account == to_account:
+        raise HTTPException(status_code=400, detail="Cannot transfer to same account")
+
     try:
-        sender = (
-            db.query(Account)
-            .filter(Account.account_number == from_account)
-            .with_for_update()
-            .first()
-        )
+        with db.begin():  # 🔒 ATOMIC TRANSACTION
 
-        receiver = (
-            db.query(Account)
-            .filter(Account.account_number == to_account)
-            .with_for_update()
-            .first()
-        )
+            sender = (
+                db.query(Account)
+                .filter(Account.account_number == from_account)
+                .with_for_update()
+                .first()
+            )
 
-        if not sender or not receiver:
-            raise HTTPException(status_code=404, detail="Account not found")
+            receiver = (
+                db.query(Account)
+                .filter(Account.account_number == to_account)
+                .with_for_update()
+                .first()
+            )
 
-        if sender.balance < amount:
-            raise HTTPException(status_code=400, detail="Insufficient balance")
+            if not sender or not receiver:
+                raise HTTPException(status_code=404, detail="Account not found")
 
-        sender.balance -= amount
-        receiver.balance += amount
+            # 🔐 Ownership check
+            if sender.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Not your account")
 
-        db.commit()
+            if sender.balance < amount:
+                raise HTTPException(status_code=400, detail="Insufficient balance")
+
+            sender.balance -= amount
+            receiver.balance += amount
+
+            db.add(sender)
+            db.add(receiver)
 
         return {
             "message": "Transfer successful",
@@ -224,6 +232,9 @@ def transfer(
             "amount": amount,
         }
 
-    except Exception:
+    except HTTPException:
+        raise
+
+    except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Transfer failed")
+        raise HTTPException(status_code=500, detail=str(e))
