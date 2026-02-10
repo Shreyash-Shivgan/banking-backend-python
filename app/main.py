@@ -179,52 +179,51 @@ def withdraw(
     }
 
 
+
 @app.post("/accounts/transfer")
-def transfer_money(
+def transfer(
     from_account: str,
     to_account: str,
     amount: float,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_role("customer")),
+    current_user: User = Depends(get_current_user),
 ):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
     try:
-        with db.begin():  # 🔒 REAL TRANSACTION STARTS HERE
+        sender = (
+            db.query(Account)
+            .filter(Account.account_number == from_account)
+            .with_for_update()
+            .first()
+        )
 
-            sender = db.execute(
-                select(Account)
-                .where(Account.account_number == from_account)
-                .with_for_update()
-            ).scalar_one_or_none()
+        receiver = (
+            db.query(Account)
+            .filter(Account.account_number == to_account)
+            .with_for_update()
+            .first()
+        )
 
-            receiver = db.execute(
-                select(Account)
-                .where(Account.account_number == to_account)
-                .with_for_update()
-            ).scalar_one_or_none()
+        if not sender or not receiver:
+            raise HTTPException(status_code=404, detail="Account not found")
 
-            if not sender or not receiver:
-                raise HTTPException(status_code=404, detail="Account not found")
+        if sender.balance < amount:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
 
-            if sender.user_id != current_user["id"]:
-                raise HTTPException(status_code=403, detail="Unauthorized")
+        sender.balance -= amount
+        receiver.balance += amount
 
-            if sender.balance < amount:
-                raise HTTPException(status_code=400, detail="Insufficient balance")
+        db.commit()
 
-            sender.balance -= amount
-            receiver.balance += amount
-
-        # commit happens automatically here
         return {
+            "message": "Transfer successful",
             "from": from_account,
             "to": to_account,
             "amount": amount,
-            "status": "success"
         }
 
-    except SQLAlchemyError:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Transaction failed")
+        raise HTTPException(status_code=500, detail="Transfer failed")
