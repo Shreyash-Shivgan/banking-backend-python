@@ -5,8 +5,13 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 import uuid
+from app.database import engine
+from app.base import Base
+from app.users import User
+from app.accounts import Account
+from app.transactions import Transaction
+Base.metadata.create_all(bind=engine)
 from app.database import Base, engine, SessionLocal
-from app.models import User, Account
 from app.security import (
     hash_password,
     verify_password,
@@ -189,52 +194,99 @@ def transfer(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    if from_account == to_account:
-        raise HTTPException(status_code=400, detail="Cannot transfer to same account")
-
     try:
-        with db.begin():  # 🔒 ATOMIC TRANSACTION
+        sender = (
+            db.query(Account)
+            .filter(Account.account_number == from_account)
+            .with_for_update()
+            .first()
+        )
 
-            sender = (
-                db.query(Account)
-                .filter(Account.account_number == from_account)
-                .with_for_update()
-                .first()
-            )
+        receiver = (
+            db.query(Account)
+            .filter(Account.account_number == to_account)
+            .with_for_update()
+            .first()
+        )
 
-            receiver = (
-                db.query(Account)
-                .filter(Account.account_number == to_account)
-                .with_for_update()
-                .first()
-            )
+        if not sender or not receiver:
+            raise HTTPException(status_code=404, detail="Account not found")
 
-            if not sender or not receiver:
-                raise HTTPException(status_code=404, detail="Account not found")
+        if sender.balance < amount:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
 
-            # 🔐 Ownership check
-            if sender.user_id != current_user.id:
-                raise HTTPException(status_code=403, detail="Not your account")
+        sender.balance -= amount
+        receiver.balance += amount
 
-            if sender.balance < amount:
-                raise HTTPException(status_code=400, detail="Insufficient balance")
+        # ✅ THIS is where transaction logging goes
+        db.add(Transaction(
+            from_account=from_account,
+            to_account=to_account,
+            amount=amount
+        ))
 
-            sender.balance -= amount
-            receiver.balance += amount
+        db.commit()
 
-            db.add(sender)
-            db.add(receiver)
+        return {"message": "Transfer successful"}
 
-        return {
-            "message": "Transfer successful",
-            "from": from_account,
-            "to": to_account,
-            "amount": amount,
-        }
-
-    except HTTPException:
+    except Exception:
+        db.rollback()
         raise
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/transactions")
+def transaction_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # get all user accounts
+    accounts = (
+        db.query(Account)
+        .filter(Account.user_id == current_user.id)
+        .all()
+    )
+
+    account_numbers = [acc.account_number for acc in accounts]
+
+    transactions = (
+        db.query(Transaction)
+        .filter(
+            (Transaction.from_account.in_(account_numbers)) |
+            (Transaction.to_account.in_(account_numbers))
+        )
+        .order_by(Transaction.timestamp.desc())
+        .all()
+    )
+
+    return [
+    {
+        "from_account": t.from_account,
+        "to_account": t.to_account,
+        "amount": t.amount,
+        "timestamp": t.timestamp,
+    }
+    for t in transactions
+]
+
+
+@app.get("/accounts/balance")
+def check_balance(
+    account_number: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    account = (
+        db.query(Account)
+        .filter(
+            Account.account_number == account_number,
+            Account.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    return {
+        "account_number": account.account_number,
+        "balance": account.balance,
+    }

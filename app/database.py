@@ -1,26 +1,22 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
+
+from app.base import Base  # ✅ Base comes from here
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+print("🔥 DATABASE_URL =", DATABASE_URL)
 
 engine = create_engine(
     DATABASE_URL,
-    echo=True  # shows SQL queries (learning mode)
+    echo=True,
 )
 
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
-    bind=engine
+    bind=engine,
 )
-
-Base = declarative_base()
-
-print("🔥 DATABASE_URL =", DATABASE_URL)  # TEMP DEBUG
-
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL not set")
