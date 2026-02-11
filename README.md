@@ -1,28 +1,33 @@
-# Banking Backend System
+# 🏦 Banking Backend API (FastAPI + PostgreSQL)
 
-A secure banking backend built using FastAPI.
-This project focuses on correctness, security, and clean backend architecture.
+A production-ready backend banking system built using FastAPI, SQLAlchemy, and PostgreSQL.
 
-## Tech Stack
-- Python
+## 🚀 Features
+
+- JWT Authentication
+- Account Creation
+- Deposit / Withdraw
+- Secure Transfers (row-level locking)
+- Transaction Logging
+- Pagination Support
+- Role-Based Access
+- Dockerized Setup
+- Pytest Test Coverage
+
+## 🛠 Tech Stack
+
 - FastAPI
-- PostgreSQL (planned)
-- SQLAlchemy (planned)
-- JWT Authentication (planned)
-- Docker (planned)
+- PostgreSQL
+- SQLAlchemy
+- Alembic
+- Docker & Docker Compose
+- Pytest
 
-## Planned Features
-- User registration and authentication
-- Role-based access (Admin / Customer)
-- Bank account management
-- Deposit and withdrawal with atomic transactions
-- Transaction history
-- Secure password hashing
-- API documentation with Swagger
+## 🔐 Authentication
 
-## Project Roadmap
-Phase 1: Project setup and basic API  
-Phase 2: Authentication and user management  
-Phase 3: Banking operations  
-Phase 4: Security, testing, and optimization  
-Phase 5: Deployment
+JWT-based login system.
+
+## 📦 Run with Docker
+
+```bash
+docker-compose up --build

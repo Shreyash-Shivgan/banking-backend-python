@@ -12,6 +12,10 @@ from app.accounts import Account
 from app.transactions import Transaction
 Base.metadata.create_all(bind=engine)
 from app.database import Base, engine, SessionLocal
+from app.schemas import AccountResponse
+from typing import List
+from fastapi import Query
+from app.schemas import TransactionResponse
 from app.security import (
     hash_password,
     verify_password,
@@ -104,35 +108,31 @@ def require_role(required_role: str):
     return checker
 
 # ---------- Accounts ----------
-@app.post("/accounts/create")
+@app.post("/accounts/create", response_model=AccountResponse)
 def create_account(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("customer")),
+    current_user: User = Depends(get_current_user),
 ):
-    account_number = str(uuid.uuid4())[:12]
-
-    account = Account(
-        account_number=account_number,
+    new_account = Account(
+        account_number=str(uuid.uuid4())[:12],
         balance=0.0,
         user_id=current_user.id,
     )
 
-    db.add(account)
+    db.add(new_account)
     db.commit()
-    db.refresh(account)
+    db.refresh(new_account)
 
-    return {
-        "account_number": account.account_number,
-        "balance": account.balance,
-    }
+    return new_account   # ✅ This fixes it
 
-@app.post("/accounts/deposit")
+@app.post("/accounts/deposit", response_model=AccountResponse)
 def deposit(
     account_number: str,
     amount: float,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("customer")),
+    current_user: User = Depends(get_current_user),
 ):
+
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
@@ -142,24 +142,33 @@ def deposit(
         .first()
     )
 
-    if not account or account.user_id != current_user.id:
+    if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
     account.balance += amount
-    db.commit()
 
-    return {
-        "account_number": account.account_number,
-        "balance": account.balance,
-    }
+    # 🔥 LOG TRANSACTION
+    transaction = Transaction(
+        from_account=None,
+        to_account=account.account_number,
+        amount=amount,
+        type="deposit"
+    )
+
+    db.add(transaction)
+    db.commit()
+    db.refresh(account)
+
+    return account
 
 @app.post("/accounts/withdraw")
 def withdraw(
     account_number: str,
     amount: float,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("customer")),
+    current_user: User = Depends(get_current_user),
 ):
+
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
@@ -169,19 +178,27 @@ def withdraw(
         .first()
     )
 
-    if not account or account.user_id != current_user.id:
+    if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
     if account.balance < amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
     account.balance -= amount
-    db.commit()
 
-    return {
-        "account_number": account.account_number,
-        "balance": account.balance,
-    }
+    # 🔥 LOG TRANSACTION
+    transaction = Transaction(
+        from_account=account.account_number,
+        to_account=None,
+        amount=amount,
+        type="withdraw"
+    )
+
+    db.add(transaction)
+    db.commit()
+    db.refresh(account)
+
+    return account
 
 @app.post("/accounts/transfer")
 def transfer(
@@ -191,6 +208,7 @@ def transfer(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
@@ -215,58 +233,67 @@ def transfer(
         if sender.balance < amount:
             raise HTTPException(status_code=400, detail="Insufficient balance")
 
+        # 🔥 UPDATE BALANCES
         sender.balance -= amount
         receiver.balance += amount
 
-        # ✅ THIS is where transaction logging goes
-        db.add(Transaction(
-            from_account=from_account,
-            to_account=to_account,
-            amount=amount
-        ))
+        # 🔥 LOG TRANSACTION (SINGLE RECORD)
+        transaction = Transaction(
+            from_account=sender.account_number,
+            to_account=receiver.account_number,
+            amount=amount,
+            type="transfer"
+        )
 
+        db.add(transaction)
         db.commit()
 
-        return {"message": "Transfer successful"}
+        return {
+            "from_account": from_account,
+            "to_account": to_account,
+            "amount": amount
+        }
 
-    except Exception:
+    except:
         db.rollback()
-        raise
+        raise HTTPException(status_code=500, detail="Transfer failed")
 
-@app.get("/transactions")
+@app.get("/transactions", response_model=list[TransactionResponse])
 def transaction_history(
+    limit: int = 20,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # get all user accounts
-    accounts = (
-        db.query(Account)
-        .filter(Account.user_id == current_user.id)
-        .all()
-    )
 
-    account_numbers = [acc.account_number for acc in accounts]
+    query = db.query(Transaction)
 
-    transactions = (
-        db.query(Transaction)
-        .filter(
+    # If user is NOT admin → filter their transactions only
+    if current_user.role != "admin":
+
+        # Get all accounts of this user
+        user_accounts = (
+            db.query(Account)
+            .filter(Account.user_id == current_user.id)
+            .all()
+        )
+
+        account_numbers = [acc.account_number for acc in user_accounts]
+
+        query = query.filter(
             (Transaction.from_account.in_(account_numbers)) |
             (Transaction.to_account.in_(account_numbers))
         )
+
+    transactions = (
+        query
         .order_by(Transaction.timestamp.desc())
+        .limit(limit)
+        .offset(offset)
         .all()
     )
 
-    return [
-    {
-        "from_account": t.from_account,
-        "to_account": t.to_account,
-        "amount": t.amount,
-        "timestamp": t.timestamp,
-    }
-    for t in transactions
-]
-
+    return transactions
 
 @app.get("/accounts/balance")
 def check_balance(
