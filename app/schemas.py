@@ -2,11 +2,6 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
-
-# -------------------
-# USER
-# -------------------
-
 class UserResponse(BaseModel):
     id: int
     email: str
@@ -15,11 +10,6 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# -------------------
-# ACCOUNT
-# -------------------
-
 class AccountResponse(BaseModel):
     id: int
     account_number: str
@@ -27,11 +17,6 @@ class AccountResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# -------------------
-# TRANSACTION
-# -------------------
 
 class TransactionResponse(BaseModel):
     id: int

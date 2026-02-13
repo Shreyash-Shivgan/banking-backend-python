@@ -3,15 +3,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
-from app.base import Base  # ✅ Base comes from here
+from app.base import Base
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")  # ✅ THIS WAS MISSING
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
 
 engine = create_engine(
     DATABASE_URL,
-    echo=True,   # You can change to False in production
+    pool_pre_ping=True
 )
 
 SessionLocal = sessionmaker(
@@ -19,6 +22,3 @@ SessionLocal = sessionmaker(
     autoflush=False,
     bind=engine,
 )
-
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL is not set")

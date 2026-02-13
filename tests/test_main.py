@@ -14,7 +14,7 @@ def test_login():
 
 
 def test_deposit():
-    # Login
+    
     login = client.post(
         "/login",
         params={"email": "a@gmail.com", "password": "1234"}
@@ -22,11 +22,9 @@ def test_deposit():
     token = login.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Create account first
     create = client.post("/accounts/create", headers=headers)
     account_number = create.json()["account_number"]
 
-    # Now deposit
     response = client.post(
         "/accounts/deposit",
         params={"account_number": account_number, "amount": 100},
@@ -43,18 +41,15 @@ def test_transfer():
     token = login.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Create two accounts
     acc1 = client.post("/accounts/create", headers=headers).json()["account_number"]
     acc2 = client.post("/accounts/create", headers=headers).json()["account_number"]
 
-    # Deposit into first account
     client.post(
         "/accounts/deposit",
         params={"account_number": acc1, "amount": 200},
         headers=headers,
     )
 
-    # Transfer
     response = client.post(
         "/accounts/transfer",
         params={
